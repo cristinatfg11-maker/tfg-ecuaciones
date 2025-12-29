@@ -1,5 +1,5 @@
 # Nombre de archivo: tfg_backend/api/management/commands/cargar_ejercicios.py
-# Versión: AUTOMATION_ROBOT_V1.0
+# Versión: FIX_SYMPY_BOOLEAN_CHECK_V2.0
 
 import os
 import re
@@ -37,17 +37,11 @@ class Command(BaseCommand):
                 nombre=nombre,
                 defaults=flags
             )
-            # Asegurar que los flags estén correctos si ya existía
-            for k, v in flags.items():
-                setattr(mod_obj, k, v)
-            mod_obj.save()
             mapa_modelos_bd[num] = mod_obj
             estado = "CREADO" if created else "YA EXISTIA"
-            self.stdout.write(f"Modelo {num}: {estado}")
+            # self.stdout.write(f"Modelo {num}: {estado}") # Comentado para limpiar log
 
         # 2. Recorrer carpetas y buscar .tex
-        cont_creados = 0
-        
         for root, dirs, files in os.walk(base_dir):
             for file in files:
                 if file.endswith(".tex"):
@@ -57,7 +51,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(f"--- PROCESO FINALIZADO ---"))
 
     def procesar_archivo(self, path, filename, mapa_modelos):
-        # A. Detectar Modelo por la carpeta o nombre
+        # A. Detectar Modelo
         modelo_num = 1
         if "Modelo 2" in path or "_2_" in filename: modelo_num = 2
         elif "Modelo 3" in path or "_3" in filename: modelo_num = 3
@@ -66,47 +60,42 @@ class Command(BaseCommand):
         
         modelo_obj = mapa_modelos.get(modelo_num)
 
-        # B. Detectar Tipo (Entreno vs Prueba)
+        # B. Detectar Tipo
         tipo = 'PRUEBA'
         if "_e.tex" in filename.lower() or "entreno" in path.lower():
             tipo = 'ENTRENAMIENTO'
 
-        # C. Leer contenido y extraer ecuación
+        # C. Leer y Extraer
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # Buscamos la primera ecuación matemática entre \[ ... \]
             matches = re.findall(r'\\\[(.*?)\\\]', content, re.DOTALL)
             if not matches:
-                return # No hay ecuación clara
+                return 
             
-            # La primera coincidencia suele ser el enunciado
             ecuacion_raw = matches[0].strip()
-            
-            # Limpiamos saltos de línea extraños del latex
             ecuacion_limpia = ecuacion_raw.replace('\n', ' ').strip()
 
-            # D. Resolver para tener la solución (usando tu motor matemático)
-            # Parseamos para validar
+            # D. Resolver
             eq_obj = ecuaciones_core.limpiar_y_crear_ecuacion(ecuacion_limpia)
-            if not eq_obj:
-                return # No se pudo entender la ecuación
-
-            # Resolvemos
-            pasos, solucion_val = ecuaciones_core.solve_equation_step_by_step(eq_obj)
             
-            # Convertir solución a string bonito
+            # CORRECCIÓN CRÍTICA: Usar 'is None' en lugar de 'if not ...'
+            # SymPy falla si intentas evaluar una ecuación como booleano.
+            if eq_obj is None:
+                self.stdout.write(self.style.WARNING(f"Saltado {filename}: No se pudo entender la ecuación."))
+                return
+
+            pasos, solucion_val = ecuaciones_core.solve_equation_step_by_step(eq_obj)
             solucion_str = str(solucion_val) if solucion_val is not None else "Sin solución"
 
-            # E. Guardar en Base de Datos (evita duplicados)
+            # E. Guardar
             obj, created = Ejercicio.objects.update_or_create(
                 ecuacion_str=ecuacion_limpia,
                 defaults={
                     'modelo': modelo_obj,
                     'tipo': tipo,
                     'solucion': solucion_str,
-                    # Auto-rellenar flags básicos
                     'incognita_una_vez': modelo_num == 1, 
                     'con_parentesis': modelo_obj.con_parentesis,
                     'con_fracciones': modelo_obj.con_fracciones,
@@ -115,7 +104,7 @@ class Command(BaseCommand):
             )
             
             if created:
-                self.stdout.write(self.style.SUCCESS(f"Importado: {filename} ({tipo}) -> Sol: {solucion_str}"))
+                self.stdout.write(self.style.SUCCESS(f"Importado: {filename} ({tipo})"))
 
         except Exception as e:
             self.stdout.write(self.style.WARNING(f"Error en {filename}: {e}"))
