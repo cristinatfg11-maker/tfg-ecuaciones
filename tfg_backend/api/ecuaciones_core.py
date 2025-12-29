@@ -1,7 +1,8 @@
 # Nombre de archivo: tfg_backend/api/ecuaciones_core.py
-# Versión: FIX_RELATIONAL_ERROR_V3.0
+# Versión: FIX_LATEX_FRACTIONS_V4.0
 
 import sympy
+import re
 from sympy import symbols, Eq, expand, solve
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
 
@@ -10,29 +11,42 @@ x = symbols('x')
 
 def limpiar_y_crear_ecuacion(equation_str: str):
     """
-    Convierte un string (ej. "2x + 4 = 10") en una ecuación SymPy.
+    Convierte un string LaTeX (ej. "\frac{2x}{3} = 4") en una ecuación SymPy.
     """
     try:
-        # 0. Limpieza básica de LaTeX y espacios
-        clean_str = equation_str.replace(r'\[', '').replace(r'\]', '')
-        clean_str = clean_str.replace('{', '(').replace('}', ')')
-        clean_str = clean_str.replace('[', '(').replace(']', ')')
-        clean_str = clean_str.strip()
+        # --- 1. LIMPIEZA AVANZADA DE LATEX ---
+        s = equation_str.strip()
         
-        # 1. Validar que tenga '='
-        if '=' not in clean_str:
+        # Eliminar comandos de entorno LaTeX que no sirven para el cálculo
+        s = s.replace(r'\[', '').replace(r'\]', '')
+        s = s.replace(r'\left', '').replace(r'\right', '')
+        
+        # TRUCO: Convertir fracciones LaTeX \frac{A}{B} a (A)/(B)
+        # Buscamos patrones \frac{...}{...} y los reemplazamos por divisiones
+        # Repetimos varias veces por si hay fracciones anidadas simples
+        for _ in range(3):
+            s = re.sub(r'\\frac\s*\{(.*?)\}\s*\{(.*?)\}', r'(\1)/(\2)', s)
+
+        # Reemplazar corchetes restantes por paréntesis
+        s = s.replace('{', '(').replace('}', ')')
+        s = s.replace('[', '(').replace(']', ')')
+        
+        # Eliminar cualquier backslash que haya sobrado (ej. espacios \,)
+        s = s.replace('\\', '')
+
+        # --- 2. VALIDACIÓN ---
+        if '=' not in s:
             return None
             
-        lhs_str, rhs_str = clean_str.split('=', 1)
+        lhs_str, rhs_str = s.split('=', 1)
 
-        # 2. Configurar transformaciones (2x -> 2*x)
+        # --- 3. PARSEO CON MULTIPLICACIÓN IMPLÍCITA (2x -> 2*x) ---
         transformations = (standard_transformations + (implicit_multiplication_application,))
 
-        # 3. Parsear Lado Izquierdo (LHS)
+        # Parsear Lado Izquierdo (LHS) - Intentando limpiar prefijos de texto
         parts = lhs_str.split()
         lhs_expr = None
         
-        # Intentar parsear quitando palabras del principio si falla
         for i in range(len(parts)):
             candidate = " ".join(parts[i:])
             try:
@@ -44,14 +58,14 @@ def limpiar_y_crear_ecuacion(equation_str: str):
         if lhs_expr is None:
             return None 
 
-        # 4. Parsear Lado Derecho (RHS)
+        # Parsear Lado Derecho (RHS)
         rhs_expr = parse_expr(rhs_str, transformations=transformations, evaluate=False)
 
-        # 5. Retornar ecuación
         return Eq(lhs_expr, rhs_expr, evaluate=False)
 
     except Exception as e:
-        print(f"Error parseando '{equation_str}': {e}")
+        # Solo imprimimos errores graves, ignoramos warnings de parseo simple
+        print(f"Advertencia parseando '{equation_str}': {e}")
         return None
 
 def clasificar_ecuacion(eq_obj, eq_str: str) -> dict:
@@ -70,7 +84,7 @@ def solve_equation_step_by_step(eq_obj):
         lhs_expand = expand(eq_obj.lhs)
         rhs_expand = expand(eq_obj.rhs)
         
-        # CORRECCION CRITICA: Comparamos como STRING para evitar error booleano
+        # COMPARACIÓN SEGURA (Como Strings) para evitar error "truth value"
         eq_original_str = str(eq_obj.lhs) + "=" + str(eq_obj.rhs)
         eq_expandida_str = str(lhs_expand) + "=" + str(rhs_expand)
 
