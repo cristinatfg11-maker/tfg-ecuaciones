@@ -1,112 +1,111 @@
-# Nombre de archivo: api/ecuaciones_core.py
-# VERSIÓN FINAL: Genera LaTeX
+# Nombre de archivo: tfg_backend/api/ecuaciones_core.py
+# Versión: FIX_IMPLICIT_MULT_V2.0
 
-import re
-from sympy import sympify, Eq, symbols, solve, simplify
-from sympy import latex # ¡NUEVA IMPORTACIÓN!
+import sympy
+from sympy import symbols, Eq, expand, solve
+from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
 
-# Definimos el símbolo 'x'
+# Definimos 'x' como el símbolo
 x = symbols('x')
 
 def limpiar_y_crear_ecuacion(equation_str: str):
     """
-    Limpia el string de la ecuación y la convierte en un objeto Ecuación de SymPy.
+    Convierte un string (ej. "2x + 4 = 10") en una ecuación SymPy.
+    Maneja multiplicación implícita (2x -> 2*x).
     """
     try:
-        # 1. Eliminar cualquier etiqueta o prefijo (ej. "3a) ")
-        cleaned_str = re.sub(r'^[a-zA-Z0-9]+\)\s*', '', equation_str).strip()
+        # 0. Limpieza básica de LaTeX
+        clean_str = equation_str.replace(r'\[', '').replace(r'\]', '') # Quitar bloques latex
+        clean_str = clean_str.replace('{', '(').replace('}', ')') # Corchetes latex a parentesis
+        clean_str = clean_str.replace('[', '(').replace(']', ')') # Corchetes normales a parentesis
         
-        # 2. Asegurarse de que los multiplicadores implícitos sean explícitos (ej. 2(x -> 2*(x)
-        cleaned_str = re.sub(r'(\d+)\s*\(', r'\1*(', cleaned_str)
-        cleaned_str = re.sub(r'\)\s*\(', r')*(', cleaned_str)
+        # 1. Validar que tenga '='
+        if '=' not in clean_str:
+            return None
+            
+        lhs_str, rhs_str = clean_str.split('=', 1)
+
+        # 2. Configurar transformaciones para entender "2x" como "2*x"
+        transformations = (standard_transformations + (implicit_multiplication_application,))
+
+        # 3. Parsear Lado Izquierdo (LHS)
+        # Intentamos limpiar prefijos tipo "3a)" iterativamente
+        parts = lhs_str.split()
+        lhs_expr = None
         
-        # 3. Separar la ecuación en lado izquierdo y derecho
-        if '=' not in cleaned_str:
-            return None # No es una ecuación válida
+        # Probamos desde la frase completa e ir quitando la primera palabra si falla
+        for i in range(len(parts)):
+            candidate = " ".join(parts[i:])
+            try:
+                lhs_expr = parse_expr(candidate, transformations=transformations, evaluate=False)
+                break # Si funciona, nos quedamos con este
+            except Exception:
+                continue
         
-        parts = cleaned_str.split('=')
-        left_side = sympify(parts[0])
-        right_side = sympify(parts[1])
-        
-        # 4. Crear el objeto Ecuación
-        eq = Eq(left_side, right_side)
-        return eq
-        
+        if lhs_expr is None:
+            return None # No se pudo entender el lado izquierdo
+
+        # 4. Parsear Lado Derecho (RHS)
+        rhs_expr = parse_expr(rhs_str, transformations=transformations, evaluate=False)
+
+        # 5. Retornar ecuación
+        return Eq(lhs_expr, rhs_expr, evaluate=False)
+
     except Exception as e:
         print(f"Error en limpiar_y_crear_ecuacion: {e}")
         return None
 
-def solve_equation_step_by_step(eq: Eq):
-    """
-    Resuelve una ecuación de primer grado paso a paso y devuelve los pasos y la solución
-    en formato LaTeX.
-    """
+def clasificar_ecuacion(eq_obj, eq_str: str) -> dict:
+    """Clasifica la ecuación para el frontend."""
+    # Convertimos a string para buscar caracteres visuales
+    s = eq_str.lower()
+    return {
+        "con_parentesis": '(' in s or '[' in s,
+        "con_fracciones": 'frac' in s or '/' in s,
+        # Nota: Esto es una heurística simple
+        "incognita_una_vez": str(eq_obj.lhs).count('x') + str(eq_obj.rhs).count('x') == 1,
+        "incognita_mas_de_una_vez": str(eq_obj.lhs).count('x') + str(eq_obj.rhs).count('x') > 1
+    }
+
+def solve_equation_step_by_step(eq_obj):
+    """Resuelve la ecuación y devuelve pasos + solución final."""
     pasos = []
-    
-    # --- ¡NUEVA FUNCIÓN INTERNA PARA CONVERTIR A LATEX! ---
-    def to_latex(expression):
-        # Convierte la expresión a LaTeX y la envuelve en $$
-        return f"$${latex(expression)}$$"
-
     try:
-        # Paso 1: Expandir (Eliminar paréntesis)
-        eq_expanded = eq.expand()
-        
-        # Solo añadimos el paso si la ecuación cambió
-        if eq_expanded != eq:
-            pasos.append({
-                'paso': 1,
-                'descripcion': 'Eliminamos los paréntesis aplicando la propiedad distributiva.',
-                'ecuacion': to_latex(eq_expanded) # ¡Convertido a LaTeX!
-            })
-        
-        # Paso 2: Agrupar términos (x a la izquierda, números a la derecha)
-        # SymPy lo hace "lhs - rhs = 0", así que reorganizamos
-        expr = eq_expanded.lhs - eq_expanded.rhs
-        
-        # Separar términos con 'x' de los términos constantes
-        terms_with_x = expr.collect(x).coeff(x) * x
-        constants = expr.subs(x, 0)
-        
-        # Crear la nueva ecuación agrupada: terms_with_x = -constants
-        eq_grouped = Eq(terms_with_x, -constants)
-        
-        paso_num = len(pasos) + 1
-        pasos.append({
-            'paso': paso_num,
-            'descripcion': "Agrupamos y operamos todos los términos con 'x' en un lado y los números en el otro.",
-            'ecuacion': to_latex(eq_grouped) # ¡Convertido a LaTeX!
-        })
+        # PASO 1: Expandir (quitar paréntesis)
+        lhs_expand = expand(eq_obj.lhs)
+        rhs_expand = expand(eq_obj.rhs)
+        eq_expandida = Eq(lhs_expand, rhs_expand)
 
-        # Paso 3: Aislar x (resolver para x)
-        solucion = solve(eq_grouped, x)
-        
-        # Obtener el coeficiente de x y la constante
-        coeficiente = terms_with_x.coeff(x)
-        constante = -constants
-
-        paso_num_final = paso_num + 1
-        if coeficiente != 1:
+        if eq_expandida != eq_obj:
             pasos.append({
-                'paso': paso_num_final,
-                'descripcion': f"Aislamos 'x' pasando el coeficiente ({coeficiente}) a dividir.",
-                'ecuacion': to_latex(Eq(x, constante / coeficiente)) # ¡Convertido a LaTeX!
+                "paso": 1, 
+                "descripcion": "Eliminamos paréntesis y expandimos términos.",
+                "ecuacion": f"{sympy.latex(lhs_expand)} = {sympy.latex(rhs_expand)}"
             })
-            
-        # Paso 4: Solución final simplificada
-        solucion_final_expr = constante / coeficiente
-        pasos.append({
-            'paso': paso_num_final + 1,
-            'descripcion': 'Solución final.',
-            'ecuacion': to_latex(Eq(x, solucion_final_expr.simplify())) # ¡Convertido a LaTeX!
-        })
+
+        # PASO 2: Resolver
+        solucion = solve(eq_obj, x)
         
-        # La solución es el valor numérico
-        solucion_final_valor = solucion_final_expr.simplify()
-        
-        # Devolvemos los pasos y la solución final (también en LaTeX)
-        return pasos, to_latex(Eq(x, solucion_final_valor))
-        
+        # Interpretación de la solución
+        solucion_final = ""
+        if not solucion:
+            solucion_final = "Sin solución"
+            pasos.append({"paso": 2, "descripcion": "La ecuación no tiene solución.", "ecuacion": "0 = 1"})
+        elif len(solucion) == 1:
+            val = solucion[0]
+            solucion_final = str(val) # Convertir a string simple para la BD
+            # Generamos paso final LaTeX
+            pasos.append({
+                "paso": 2, 
+                "descripcion": "Agrupamos y despejamos la incógnita.",
+                "ecuacion": f"x = {sympy.latex(val)}"
+            })
+        else:
+            solucion_final = "Infinitas soluciones"
+            pasos.append({"paso": 2, "descripcion": "Cualquier valor es válido.", "ecuacion": "0 = 0"})
+
+        return pasos, solucion_final
+
     except Exception as e:
-        print(f"Error en solve_equation_step_by_step: {e}")
+        print(f"Error resolviendo: {e}")
         return [], None
