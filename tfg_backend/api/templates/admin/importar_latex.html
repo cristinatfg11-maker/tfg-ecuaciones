@@ -1,0 +1,38 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+
+<h1>{{ title }}</h1>
+
+<p>
+  Este proceso leerá la carpeta <strong>tfg_backend/Modelos/</strong> y cargará
+  todos los archivos .tex que encuentre.
+</p>
+<p>
+  Asegúrate de que la estructura de carpetas sea correcta (ej.
+  /Modelos/Modelo 2/Modelo 2 latex entreno/ejercicio.tex).
+</p>
+
+<form method="POST">
+  {% csrf_token %}
+  <button type="submit">Iniciar Importación de LaTeX</button>
+</form>
+
+{% if log %}
+  <h2>Log de Importación:</h2>
+  <div
+    style="
+      background: #f4f4f4;
+      border: 1px solid #ccc;
+      padding: 10px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: monospace;
+    "
+  >
+    {% for line in log %}
+      <div style="{% if 'ERROR' in line %}color: red;{% elif 'CREADO' in line %}color: green;{% endif %}">
+        {{ line }}
+      </div>
+    {% endfor %}
+  </div>
+{% endif %} {% endblock %}

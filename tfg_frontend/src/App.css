@@ -1,0 +1,121 @@
+/*
+* ARCHIVO App.css COMPLETO
+* Versión "Tema Blanco" - Idéntico a la imagen
+*/
+
+/* 1. Resetear el fondo de la app a BLANCO (como la imagen) */
+.App-header {
+  background-color: #ffffff; /* Fondo blanco */
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 50px; /* Un poco de espacio arriba */
+  font-size: 1rem; /* Tamaño de letra normal */
+  color: #222; /* Texto negro por defecto */
+}
+
+/* 2. Estilos de los componentes (AJUSTADOS A LA IMAGEN) */
+
+.equation-box {
+  background: #ffffff; /* Fondo blanco */
+  border: 1px solid #ddd;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  text-align: left; /* Asegurar alineación izquierda */
+  width: 100%;
+  max-width: 700px;
+}
+
+.comment {
+  margin-top: 8px;
+  background: #fffbea;
+  border-left: 4px solid #ffd54f;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 0.95rem;
+  color: #333; /* Asegurar texto oscuro */
+}
+
+.steps {
+  margin-top: 10px;
+  width: 100%;
+  max-width: 700px;
+  /* No más grid, ahora son líneas */
+}
+
+/* Estilo de CADA paso (idéntico a la imagen) */
+.step {
+  /* Ya no es una caja con bordes */
+  border-bottom: 1px solid #e0e0e0; /* Línea separadora */
+  padding: 12px 0; /* Espaciado vertical */
+  background: #fff;
+}
+
+/* El primer paso no necesita línea arriba, pero el último sí abajo */
+.step:first-of-type {
+  border-top: 1px solid #e0e0e0;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.step-title {
+  font-weight: 400; /* Normal, el <strong> hará el trabajo */
+  color: #222; /* Texto negro */
+  text-align: left;
+}
+
+.btn-toggle {
+  background: #1976d2;
+  color: white;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  flex-shrink: 0; /* Evita que el botón se encoja */
+}
+.btn-toggle:active { 
+  transform: translateY(1px); 
+}
+
+.step-content {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #eee;
+  color: #333; /* Texto negro */
+  text-align: left;
+}
+
+.final {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #e8f5e9;
+  border: 1px solid #c8e6c9;
+  font-weight: 700;
+  color: #1b5e20; /* Texto oscuro */
+  width: 100%;
+  max-width: 700px;
+  text-align: left;
+}
+
+/* Estilo para las Notas (NUEVO) */
+.notas-section {
+  width: 100%;
+  max-width: 700px;
+  text-align: left;
+  font-size: 0.9rem;
+  color: #555;
+  margin-top: 20px;
+}
+.notas-section ul {
+  margin-top: 5px;
+  padding-left: 20px; /* Indentación normal de lista */
+}
