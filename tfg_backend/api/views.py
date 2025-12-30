@@ -1,206 +1,190 @@
-# Nombre de archivo: api/views.py
-# Versión: UPDATE_RANKING_ENDPOINT_V4.0
+# Nombre de archivo: tfg_backend/api/views.py
+# Versión: LOCAL_REPLICA_FINAL
 
-from django.http import JsonResponse, HttpRequest
-from django.views.decorators.csrf import csrf_exempt
-from django.contrib.auth import authenticate
-from django.contrib.auth.models import User
 import json
-import re
-import random 
-from . import ecuaciones_core
-from .models import Ejercicio, ModeloEjercicio, ProgresoUsuario
+import random
+from django.contrib.auth import authenticate, login, get_user_model
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.db.models import F
+from .models import Ejercicio, ModeloEjercicio, ProgresoUsuario, PasoResolucion
+from .ecuaciones_core import solve_equation_step_by_step, limpiar_y_crear_ecuacion, clasificar_ecuacion
 
-# =================================================================
-# 1. AUTENTICACIÓN
-# =================================================================
-
-@csrf_exempt
-def registro_usuario_view(request: HttpRequest):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            username = data.get('username')
-            password = data.get('password')
-            if not username or not password: return JsonResponse({'error': 'Faltan datos'}, status=400)
-            if User.objects.filter(username=username).exists(): return JsonResponse({'error': 'El usuario ya existe'}, status=400)
-            user = User.objects.create_user(username=username, password=password)
-            ProgresoUsuario.objects.create(usuario=user, puntos_totales=0)
-            return JsonResponse({'status': 'exito', 'mensaje': 'Usuario registrado'})
-        except Exception as e: return JsonResponse({'error': str(e)}, status=500)
-    return JsonResponse({'error': 'Solo POST'}, status=405)
+User = get_user_model()
 
 @csrf_exempt
-def login_usuario_view(request: HttpRequest):
+def registro_usuario_view(request):
     if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            username = data.get('username')
-            password = data.get('password')
-            user = authenticate(username=username, password=password)
-            if user is not None:
-                progreso, _ = ProgresoUsuario.objects.get_or_create(usuario=user)
-                return JsonResponse({'status': 'exito', 'user_id': user.id, 'username': user.username, 'puntos': progreso.puntos_totales})
-            else: return JsonResponse({'error': 'Credenciales incorrectas'}, status=401)
-        except Exception as e: return JsonResponse({'error': str(e)}, status=500)
-    return JsonResponse({'error': 'Solo POST'}, status=405)
+        data = json.loads(request.body)
+        username = data.get('username')
+        password = data.get('password')
+        
+        if User.objects.filter(username=username).exists():
+            return JsonResponse({'error': 'El usuario ya existe'}, status=400)
+        
+        user = User.objects.create_user(username=username, password=password)
+        
+        # --- REPLICA EXACTA LOCAL: Puntos Iniciales = 50 ---
+        ProgresoUsuario.objects.create(usuario=user, puntos_totales=50)
+        
+        return JsonResponse({'status': 'exito', 'mensaje': 'Usuario registrado'})
+    return JsonResponse({'error': 'Método no permitido'}, status=405)
 
 @csrf_exempt
-def cambiar_password_view(request: HttpRequest):
+def login_usuario_view(request):
     if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            user = authenticate(username=data.get('username'), password=data.get('old_password'))
-            if user:
-                user.set_password(data.get('new_password'))
-                user.save()
-                return JsonResponse({'status': 'exito'})
-            return JsonResponse({'error': 'Contraseña incorrecta'}, status=400)
-        except Exception as e: return JsonResponse({'error': str(e)}, status=500)
-    return JsonResponse({'error': 'Solo POST'}, status=405)
+        data = json.loads(request.body)
+        username = data.get('username')
+        password = data.get('password')
+        user = authenticate(username=username, password=password)
+        
+        if user is not None:
+            login(request, user)
+            progreso, _ = ProgresoUsuario.objects.get_or_create(usuario=user)
+            return JsonResponse({
+                'status': 'exito', 
+                'user_id': user.id, 
+                'username': user.username,
+                'puntos': progreso.puntos_totales
+            })
+        else:
+            return JsonResponse({'error': 'Credenciales inválidas'}, status=400)
+    return JsonResponse({'error': 'Método no permitido'}, status=405)
 
 @csrf_exempt
-def actualizar_puntos_view(request: HttpRequest):
+def cambiar_password_view(request):
     if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            progreso = ProgresoUsuario.objects.get(usuario_id=data.get('user_id'))
-            progreso.puntos_totales = data.get('puntos')
-            progreso.save()
-            return JsonResponse({'status': 'exito'})
-        except Exception as e: return JsonResponse({'error': str(e)}, status=500)
-    return JsonResponse({'error': 'Solo POST'}, status=405)
-
-# =================================================================
-# 2. NUEVA LÓGICA ALEATORIA Y RANKING (GAMIFICACIÓN)
-# =================================================================
+        data = json.loads(request.body)
+        username = data.get('username')
+        password = data.get('password')
+        new_password = data.get('new_password')
+        
+        user = authenticate(username=username, password=password)
+        if user is not None:
+            user.set_password(new_password)
+            user.save()
+            return JsonResponse({'status': 'exito', 'mensaje': 'Contraseña actualizada'})
+        else:
+            return JsonResponse({'error': 'Credenciales actuales incorrectas'}, status=400)
+    return JsonResponse({'error': 'Método no permitido'}, status=405)
 
 @csrf_exempt
-def obtener_ejercicio_aleatorio_view(request: HttpRequest):
-    """Devuelve un ejercicio aleatorio NO completado del tipo solicitado"""
+def lista_modelos_view(request):
+    modelos = ModeloEjercicio.objects.all().values('id', 'nombre')
+    return JsonResponse({'modelos': list(modelos)})
+
+@csrf_exempt
+def obtener_ejercicio_aleatorio_view(request):
     if request.method == 'POST':
+        data = json.loads(request.body)
+        user_id = data.get('user_id')
+        tipo = data.get('tipo', 'ENTRENAMIENTO')
+        
         try:
-            data = json.loads(request.body)
-            user_id = data.get('user_id')
-            tipo_solicitado = data.get('tipo') 
-            
             progreso = ProgresoUsuario.objects.get(usuario_id=user_id)
             completados_ids = progreso.ejercicios_completados.values_list('id', flat=True)
-            disponibles = Ejercicio.objects.filter(tipo=tipo_solicitado).exclude(id__in=completados_ids)
             
-            if not disponibles.exists():
-                return JsonResponse({'status': 'fin', 'mensaje': '¡Has completado todos los ejercicios!'})
+            # Filtrar ejercicios del tipo solicitado que NO estén completados
+            ejercicios_disponibles = Ejercicio.objects.filter(tipo=tipo).exclude(id__in=completados_ids)
             
-            seleccionado = random.choice(list(disponibles))
+            if not ejercicios_disponibles.exists():
+                return JsonResponse({'status': 'fin', 'mensaje': 'No hay más ejercicios disponibles.'})
+            
+            ejercicio = random.choice(list(ejercicios_disponibles))
+            
+            eq_obj = limpiar_y_crear_ecuacion(ejercicio.ecuacion_str)
+            caracteristicas = clasificar_ecuacion(eq_obj, ejercicio.ecuacion_str)
+            
+            # Inyectamos las características reales desde la lógica matemática
+            # para asegurar que coincidan con la clasificación visual
             
             return JsonResponse({
                 'status': 'exito',
-                'id': seleccionado.id,
-                'ecuacion_str': seleccionado.ecuacion_str,
-                'modelo_id': seleccionado.modelo.id,
-                'caracteristicas': {
-                    'incognita_una_vez': seleccionado.modelo.incognita_una_vez,
-                    'incognita_mas_de_una_vez': seleccionado.modelo.incognita_mas_de_una_vez,
-                    'con_parentesis': seleccionado.modelo.con_parentesis,
-                    'con_fracciones': seleccionado.modelo.con_fracciones
-                }
+                'id': ejercicio.id,
+                'ecuacion_str': ejercicio.ecuacion_str,
+                'modelo_id': ejercicio.modelo.id if ejercicio.modelo else None,
+                'caracteristicas': caracteristicas
             })
             
+        except ProgresoUsuario.DoesNotExist:
+            return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
-    return JsonResponse({'error': 'Solo POST'}, status=405)
 
 @csrf_exempt
-def marcar_ejercicio_completado_view(request: HttpRequest):
+def resolver_ecuacion_view(request):
     if request.method == 'POST':
+        data = json.loads(request.body)
+        ecuacion_str = data.get('ecuacion')
+        
+        # 1. Buscar si ya existe en BD para ahorrar cálculo
+        ej_bd = Ejercicio.objects.filter(ecuacion_str=ecuacion_str).first()
+        tipo_ejercicio = ej_bd.tipo if ej_bd else 'ENTRENAMIENTO'
+        
+        # 2. Calcular pasos dinámicamente usando el core (Local Logic)
+        eq_obj = limpiar_y_crear_ecuacion(ecuacion_str)
+        if eq_obj is None:
+            return JsonResponse({'error': 'Ecuación inválida'}, status=400)
+            
+        pasos, solucion_final = solve_equation_step_by_step(eq_obj)
+        
+        # 3. Preparar respuesta según modo
+        if tipo_ejercicio == 'PRUEBA':
+            # Modo Prueba: Ocultamos la solución final y la descripción completa
+            pasos_ocultos = []
+            for p in pasos:
+                pasos_ocultos.append({
+                    'paso': p['paso'],
+                    'descripcion': p['descripcion'], # Se enviará, pero el Frontend decide cuándo mostrar
+                    'ecuacion': p['ecuacion']
+                })
+            
+            return JsonResponse({
+                'fuente': 'Prueba',
+                'solucion_oculta': solucion_final, # Para validación interna del frontend
+                'solucion_final_latex': f"x = {solucion_final}" if solucion_final and "x =" not in str(solucion_final) else solucion_final,
+                'pasos_completos_ocultos': pasos_ocultos
+            })
+        else:
+            # Modo Entrenamiento: Enviamos todo abierto
+            return JsonResponse({
+                'fuente': 'Entrenamiento',
+                'pasos_resolucion': pasos,
+                'solucion_final': f"x = {solucion_final}" if solucion_final and "x =" not in str(solucion_final) else solucion_final
+            })
+
+@csrf_exempt
+def actualizar_puntos_view(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        user_id = data.get('user_id')
+        nuevos_puntos = data.get('puntos')
+        
         try:
-            data = json.loads(request.body)
-            user_id = data.get('user_id')
-            ejercicio_id = data.get('ejercicio_id')
+            progreso = ProgresoUsuario.objects.get(usuario_id=user_id)
+            progreso.puntos_totales = nuevos_puntos
+            progreso.save()
+            return JsonResponse({'status': 'ok', 'puntos': progreso.puntos_totales})
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+
+@csrf_exempt
+def marcar_completado_view(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        user_id = data.get('user_id')
+        ejercicio_id = data.get('ejercicio_id')
+        
+        try:
             progreso = ProgresoUsuario.objects.get(usuario_id=user_id)
             ejercicio = Ejercicio.objects.get(id=ejercicio_id)
             progreso.ejercicios_completados.add(ejercicio)
-            progreso.save()
-            return JsonResponse({'status': 'exito'})
+            return JsonResponse({'status': 'ok'})
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
-    return JsonResponse({'error': 'Solo POST'}, status=405)
-
-# ACTUALIZACIÓN 3a: Vista para obtener el Ranking
-@csrf_exempt
-def ranking_usuarios_view(request: HttpRequest):
-    if request.method == 'GET':
-        try:
-            # Obtenemos los 10 mejores puntajes, orden descendente
-            ranking = ProgresoUsuario.objects.select_related('usuario').order_by('-puntos_totales')[:10]
-            data = [{'username': p.usuario.username, 'puntos': p.puntos_totales} for p in ranking]
-            return JsonResponse({'ranking': data})
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-    return JsonResponse({'error': 'Solo GET'}, status=405)
-
-# =================================================================
-# 3. LÓGICA CORE (RESOLVER)
-# =================================================================
-
-def obtener_pasos_formateados(ejercicio_obj):
-    pasos_en_bd = ejercicio_obj.pasos.all().order_by('numero_paso')
-    return [{'paso': p.numero_paso, 'descripcion': p.descripcion, 'ecuacion': p.ecuacion_resultante} for p in pasos_en_bd]
-
-def obtener_descripciones_pasos(pasos_formateados):
-    return [f"Paso {p['paso']}: {p['descripcion']}" for p in pasos_formateados]
-
-def extraer_valor_simple(solucion_latex):
-    if "Infinitas" in solucion_latex or "No tiene" in solucion_latex: return solucion_latex
-    valor = solucion_latex.replace('$$', '')
-    valor = re.sub(r"\\text\{.*?\}", "", valor)
-    valor = re.sub(r"\\boxed", "", valor)
-    valor = re.sub(r"^[a-zA-Z]\s*=\s*", "", valor.strip())
-    valor = re.sub(r"\\frac\{(-?\d+)\}\{(-?\d+)\}", r"\1/\2", valor)
-    return valor.replace('{', '').replace('}', '').strip()
 
 @csrf_exempt
-def resolver_ecuacion_view(request: HttpRequest):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            equation_str = data.get('ecuacion')
-            if not equation_str: return JsonResponse({'error': 'Falta ecuacion'}, status=400)
-            
-            try:
-                ej_bd = Ejercicio.objects.get(ecuacion_str=equation_str)
-                pasos = obtener_pasos_formateados(ej_bd)
-                
-                if ej_bd.tipo == 'ENTRENAMIENTO':
-                    return JsonResponse({'status': 'exito', 'fuente': 'Entrenamiento', 'solucion_final': ej_bd.solucion, 'pasos_resolucion': pasos})
-                else:
-                    return JsonResponse({
-                        'status': 'exito', 'fuente': 'Prueba', 'solucion_oculta': extraer_valor_simple(ej_bd.solucion),
-                        'solucion_final_latex': ej_bd.solucion, 'pasos_descripciones': obtener_descripciones_pasos(pasos),
-                        'pasos_completos_ocultos': pasos
-                    })
-            except Ejercicio.DoesNotExist:
-                eq = ecuaciones_core.limpiar_y_crear_ecuacion(equation_str)
-                if not eq: return JsonResponse({'error': 'Error parseo'}, status=400)
-                pasos_c, sol_c = ecuaciones_core.solve_equation_step_by_step(eq)
-                return JsonResponse({
-                    'status': 'exito', 'fuente': 'Prueba', 'solucion_oculta': extraer_valor_simple(sol_c),
-                    'solucion_final_latex': sol_c, 'pasos_descripciones': obtener_descripciones_pasos(pasos_c),
-                    'pasos_completos_ocultos': pasos_c
-                })
-        except Exception as e: return JsonResponse({'error': str(e)}, status=500)
-    return JsonResponse({'error': 'Solo POST'}, status=405)
-
-# Compatibilidad
-@csrf_exempt
-def clasificar_modelo_view(request: HttpRequest): return JsonResponse({}) 
-@csrf_exempt 
-def get_ejercicios_por_modelo_view(request: HttpRequest, modelo_id: int): return JsonResponse({}) 
-@csrf_exempt
-def lista_modelos_view(request: HttpRequest): 
-    # Necesario para el frontend corregido
-    try:
-        modelos = ModeloEjercicio.objects.all().order_by('nombre')
-        lista = [{'id': m.id, 'nombre': m.nombre} for m in modelos]
-        return JsonResponse({'modelos': lista})
-    except: return JsonResponse({'modelos': []})
+def ranking_usuarios_view(request):
+    ranking = ProgresoUsuario.objects.select_related('usuario').order_by('-puntos_totales')[:10]
+    data = [{'username': r.usuario.username, 'puntos': r.puntos_totales} for r in ranking]
+    return JsonResponse({'ranking': data})
